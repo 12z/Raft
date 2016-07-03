@@ -4,7 +4,7 @@ import thriftpy
 import random
 import queue
 import xmlrpc.client
-import collections
+# import collections
 
 from threading import Thread, Lock
 from enum import Enum
@@ -114,6 +114,7 @@ class NodeState:
         self.lock.release()
         return state
 
+
 class LeaderState:
     def __init__(self):
         servers = {}
@@ -152,20 +153,25 @@ class Node:
     def execute_request(self, receiver, request):
         if request.type == RequestType.append_entries:
             try:
-                term, success = receiver.append_entries(request.params)
+                # Workaround about passing parameters as tuple
+                term, leader_id, prev_log_index, prev_log_term, entries, leader_commit = request.params
+                term, success = receiver.append_entries(term, leader_id, prev_log_index, prev_log_term, entries,
+                                                        leader_commit)
                 return request.type, term, success
             except ConnectionRefusedError:
                 pass
         if request.type == RequestType.request_vote:
             try:
-                term, vote_granted = receiver.request_vote(request.params)
+                # print(request.params)
+                current_term, port, last_applied, last_applied = request.params  # workaround, refused to take tuple
+                term, vote_granted = receiver.request_vote(current_term, port, last_applied, last_applied)
                 return request.type, term, vote_granted
             except ConnectionRefusedError:
                 pass
         return None
 
     def start_sender(self, port):
-        print('starting sender to ', port)
+        # print('starting sender to ', port)
         while True:
             while True:
                 try:
@@ -200,9 +206,9 @@ class Node:
             except queue.Empty:
                 continue
 
-            if reply.type == RequestType.request_vote:
+            if reply[0] == RequestType.request_vote:
                 self.process_request_vote_reply(reply)
-            if reply.type == RequestType.append_entries:
+            if reply[0] == RequestType.append_entries:
                 self.process_append_entries_reply(reply)
 
     def leader_heartbeat(self):
@@ -235,7 +241,7 @@ class Node:
     def election_timer(self):
         self.timer_flag.set_value(False)
         interval = random.uniform(0.150 * self.multiplier, 0.300 * self.multiplier)  # from 150 to 300 milliseconds
-        print('Election timeout is ', interval, ' secs')
+        # print('Election timeout is ', interval, ' secs')
         time.sleep(interval)
         self.timer_flag.set_value(True)
 
@@ -265,13 +271,14 @@ class Node:
 
         # the messages that this receiver serves
         server.register_function(append_entries)
+        server.register_function(request_vote)
         server.register_function(ping)
 
         print('serving on ', self.port)
         server.serve_forever()
 
     def follower_timer(self):
-        print('started follower timer')
+        # print('started follower timer')
         while True:
             self.timer_flag.set_value(True)
             interval = random.uniform(0.150 * self.multiplier, 0.300 * self.multiplier)  # from 150 to 300 milliseconds
@@ -286,9 +293,9 @@ class Node:
 
     def state_handler(self):
         # we start at the follower state
-        print('starting state handler')
+        # print('starting state handler')
         self.state.set_state(self.follower_timer())
-        print('exited first follower loop')
+        # print('exited first follower loop')
         while True:  # will be switching between states here
             if self.state.get_state() == State.candidate:
                 self.state.set_state(self.candidate_loop())
